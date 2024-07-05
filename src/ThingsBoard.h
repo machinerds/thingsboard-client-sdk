@@ -65,6 +65,17 @@ char constexpr ATTRIBUTE_RESPONSE_SUBSCRIBE_TOPIC[] = "v1/devices/me/attributes/
 char constexpr ATTRIBUTE_RESPONSE_TOPIC[] = "v1/devices/me/attributes/response";
 #endif // THINGSBOARD_ENABLE_PROGMEM
 
+#if THINGSBOARD_ENABLE_PROGMEM
+char constexpr ATTRIBUTE_GATEWAY_REQUEST_TOPIC[] PROGMEM = "v1/gateway/attributes/request";
+char constexpr ATTRIBUTE_GATEWAY_RESPONSE_SUBSCRIBE_TOPIC[] PROGMEM = "v1/gateway/attributes/response";
+char constexpr ATTRIBUTE_GATEWAY_RESPONSE_TOPIC[] PROGMEM = "v1/gateway/attributes";
+#else
+char constexpr ATTRIBUTE_GATEWAY_REQUEST_TOPIC[] = "v1/gateway/attributes/request";
+char constexpr ATTRIBUTE_GATEWAY_RESPONSE_SUBSCRIBE_TOPIC[] = "v1/gateway/attributes/response";
+char constexpr ATTRIBUTE_GATEWAY_RESPONSE_TOPIC[] = "v1/gateway/attributes";
+#endif // THINGSBOARD_ENABLE_PROGMEM
+
+
 // Provision topics.
 #if THINGSBOARD_ENABLE_PROGMEM
 uint16_t constexpr PROGMEM DEFAULT_MQTT_PORT = 1883U;
@@ -443,6 +454,8 @@ class ThingsBoardSized {
         (void)Shared_Attributes_Unsubscribe();
         // Cleanup all client-side or shared attributes requests
         (void)Attributes_Request_Unsubscribe();
+        // Cleanup all gateway client-side or shared attributes requests
+        (void)Gateway_Attributes_Request_Unsubscribe();
         // Cleanup all provision requests
         (void)Provision_Unsubscribe();
 #if THINGSBOARD_ENABLE_OTA
@@ -1236,6 +1249,93 @@ class ThingsBoardSized {
         return Send_Json(topic, requestBuffer, objectSize);
     }
 
+
+    /// @brief Requests one client-side or shared attribute calllback,
+    /// that will be called if the key-value pair from the server for the given client-side or shared attributes is received
+    /// @param callback Callback method that will be called
+    /// @param attributeRequestKey Key of the key-value pair that will contain the attributes we want to request
+    /// @param attributeResponseKey Key of the key-value pair that will contain the attributes we got as a response
+    /// @return Whether requesting the given callback was successful or not
+#if THINGSBOARD_ENABLE_DYNAMIC
+    bool Gateway_Attributes_Request(Attribute_Request_Callback const & callback, char const * const attributeRequestKey, char const * const attributeResponseKey) {
+#else
+    bool Gateway_Attributes_Request(Attribute_Request_Callback<MaxAttributes> const & callback, char const * const attributeRequestKey, char const * const attributeResponseKey) {
+#endif // THINGSBOARD_ENABLE_DYNAMIC
+        auto const & attributes = callback.Get_Attributes();
+
+        // Check if any sharedKeys were requested
+        if (attributes.empty()) {
+            Logger::println(NO_KEYS_TO_REQUEST);
+            return false;
+        }
+        else if (attributeRequestKey == nullptr || attributeResponseKey == nullptr) {
+#if THINGSBOARD_ENABLE_DEBUG
+            Logger::println(ATT_KEY_NOT_FOUND);
+#endif // THINGSBOARD_ENABLE_DEBUG
+            return false;
+        }
+
+#if THINGSBOARD_ENABLE_DYNAMIC
+        Attribute_Request_Callback * registeredCallback = nullptr;
+#else
+        Attribute_Request_Callback<MaxAttributes> * registeredCallback = nullptr;
+#endif // THINGSBOARD_ENABLE_DYNAMIC
+        if (!Gateway_Attributes_Request_Subscribe(callback, registeredCallback)) {
+            return false;
+        }
+        else if (registeredCallback == nullptr) {
+            return false;
+        }
+
+        // String are const char* and therefore stored as a pointer --> zero copy, meaning the size for the strings is 0 bytes,
+        // Data structure size depends on the amount of key value pairs passed + the default clientKeys or sharedKeys
+        // See https://arduinojson.org/v6/assistant/ for more information on the needed size for the JsonDocument
+        StaticJsonDocument<JSON_OBJECT_SIZE(1)> requestBuffer;
+
+        // Calculate the size required for the char buffer containing all the attributes seperated by a comma,
+        // before initalizing it so it is possible to allocate it on the stack
+        size_t size = 0U;
+        for (const auto & att : attributes) {
+            if (Helper::stringIsNullorEmpty(att)) {
+                continue;
+            }
+
+            size += strlen(att);
+            size += strlen(COMMA);
+        }
+
+        // Initalizes complete array to 0, required because strncat needs both destination and source to contain proper null terminated strings
+        char request[size] = {};
+        for (const auto & att : attributes) {
+            if (Helper::stringIsNullorEmpty(att)) {
+#if THINGSBOARD_ENABLE_DEBUG
+                Logger::println(ATT_IS_NULL);
+#endif // THINGSBOARD_ENABLE_DEBUG
+                continue;
+            }
+
+            strncat(request, att, size);
+            size -= strlen(att);
+            strncat(request, COMMA, size);
+            size -= strlen(COMMA);
+        }
+
+        // Ensure to cast to const, this is done so that ArduinoJson does not copy the value but instead simply store the pointer, which does not require any more memory,
+        // besides the base size needed to allocate one key-value pair. Because if we don't the char array would be copied
+        // and because there is not enough space the value would simply be "undefined" instead. Which would cause the request to not be sent correctly
+        requestBuffer[attributeRequestKey] = static_cast<const char*>(request);
+
+        m_request_id++;
+        registeredCallback->Set_Request_ID(m_request_id);
+        registeredCallback->Set_Attribute_Key(attributeResponseKey);
+
+        char topic[Helper::detectSize(ATTRIBUTE_GATEWAY_REQUEST_TOPIC, m_request_id)] = {};
+        (void)snprintf(topic, sizeof(topic), ATTRIBUTE_GATEWAY_REQUEST_TOPIC, m_request_id);
+
+        size_t const objectSize = Helper::Measure_Json(requestBuffer);
+        return Send_Json(topic, requestBuffer, objectSize);
+    }
+
     /// @brief Subscribes one provision callback,
     /// that will be called if a provision response from the server is received
     /// @param callback Callback method that will be called
@@ -1431,6 +1531,7 @@ class ThingsBoardSized {
         // Clean up any not yet answered single event subscriptions
         (void)RPC_Request_Unsubscribe();
         (void)Attributes_Request_Unsubscribe();
+        (void)Gateway_Attributes_Request_Unsubscribe();
         (void)Provision_Unsubscribe();
     }
 
@@ -1490,12 +1591,47 @@ class ThingsBoardSized {
         return true;
     }
 
+
+    /// @brief Subscribes to attribute response topic
+    /// @param callback Callback method that will be called
+    /// @param registeredCallback Editable pointer to a reference of the local version that was copied from the passed callback
+    /// @return Whether requesting the given callback was successful or not
+#if THINGSBOARD_ENABLE_DYNAMIC
+    bool Gateway_Attributes_Request_Subscribe(Attribute_Request_Callback const & callback, Attribute_Request_Callback * & registeredCallback) {
+#else
+    bool Gateway_Attributes_Request_Subscribe(Attribute_Request_Callback<MaxAttributes> const & callback, Attribute_Request_Callback<MaxAttributes> * & registeredCallback) {
+#endif // THINGSBOARD_ENABLE_DYNAMIC
+#if !THINGSBOARD_ENABLE_DYNAMIC
+        if (m_attribute_request_callbacks.size() + 1 > m_attribute_request_callbacks.capacity()) {
+            Logger::printfln(MAX_SUBSCRIPTIONS_EXCEEDED, CLIENT_SHARED_ATTRIBUTE_SUBSCRIPTIONS);
+            return false;
+        }
+#endif // !THINGSBOARD_ENABLE_DYNAMIC
+        if (!m_client.subscribe(ATTRIBUTE_GATEWAY_RESPONSE_SUBSCRIBE_TOPIC)) {
+            Logger::printfln(SUBSCRIBE_TOPIC_FAILED, ATTRIBUTE_GATEWAY_RESPONSE_SUBSCRIBE_TOPIC);
+          return false;
+        }
+
+        // Push back given callback into our local vector
+        m_attribute_request_callbacks.push_back(callback);
+        registeredCallback = &m_attribute_request_callbacks.back();
+        return true;
+    }
+
     /// @brief Unsubscribes all client-side or shared attributes request callbacks
     /// @return Whether unsubcribing the previously subscribed callbacks
     /// and from the  attribute response topic, was successful or not
     bool Attributes_Request_Unsubscribe() {
         m_attribute_request_callbacks.clear();
         return m_client.unsubscribe(ATTRIBUTE_RESPONSE_SUBSCRIBE_TOPIC);
+    }
+
+    /// @brief Unsubscribes all client-side or shared attributes request callbacks
+    /// @return Whether unsubcribing the previously subscribed callbacks
+    /// and from the  attribute response topic, was successful or not
+    bool Gateway_Attributes_Request_Unsubscribe() {
+        m_attribute_request_callbacks.clear();
+        return m_client.unsubscribe(ATTRIBUTE_GATEWAY_RESPONSE_SUBSCRIBE_TOPIC);
     }
 
     /// @brief Attempts to send a single key-value pair with the given key and value of the given type
@@ -1761,6 +1897,57 @@ class ThingsBoardSized {
         }
     }
 
+    /// @brief Process callback that will be called upon client-side or shared attribute request arrival
+    /// and is responsible for handling the payload and calling the appropriate previously subscribed callbacks
+    /// @param topic Previously subscribed topic, we got the response over
+    /// @param data Payload sent by the server over our given topic, that contains our key value pairs
+    void process_gateway_attribute_request_message(char * const topic, JsonObjectConst & data) {
+        size_t const request_id = Helper::parseRequestId(ATTRIBUTE_GATEWAY_RESPONSE_TOPIC, topic);
+
+        for (auto it = m_attribute_request_callbacks.cbegin(); it != m_attribute_request_callbacks.cend(); ++it) {
+            auto const & attribute_request = *it;
+
+            if (attribute_request.Get_Request_ID() != request_id) {
+                continue;
+            }
+            char const * const attributeResponseKey = attribute_request.Get_Attribute_Key();
+            if (attributeResponseKey == nullptr) {
+#if THINGSBOARD_ENABLE_DEBUG
+                Logger::println(ATT_KEY_NOT_FOUND);
+#endif // THINGSBOARD_ENABLE_DEBUG
+                goto delete_callback;
+            }
+            else if (!data) {
+#if THINGSBOARD_ENABLE_DEBUG
+                Logger::println(ATT_KEY_NOT_FOUND);
+#endif // THINGSBOARD_ENABLE_DEBUG
+                goto delete_callback;
+            }
+
+            if (data.containsKey(attributeResponseKey)) {
+                data = data[attributeResponseKey];
+            }
+
+#if THINGSBOARD_ENABLE_DEBUG
+            Logger::printfln(CALLING_REQUEST_CB, request_id);
+#endif // THINGSBOARD_ENABLE_DEBUG
+
+            attribute_request.template Call_Callback<Logger>(data);
+
+            delete_callback:
+            // Delete callback because the changes have been requested and the callback is no longer needed
+            Helper::remove(m_attribute_request_callbacks, it);
+            break;
+        }
+
+        // Unsubscribe from the shared attribute request topic,
+        // if we are not waiting for any further responses with shared attributes from the server.
+        // Will be resubscribed if another request is sent anyway
+        if (m_attribute_request_callbacks.empty()) {
+            (void)Gateway_Attributes_Request_Unsubscribe();
+        }
+    }
+
     /// @brief Process callback that will be called upon provision response arrival
     /// and is responsible for handling the payload and calling the appropriate previously subscribed callback
     /// @param topic Previously subscribed topic, we got the response over
@@ -1857,6 +2044,9 @@ class ThingsBoardSized {
         }
         else if (strncmp(ATTRIBUTE_RESPONSE_TOPIC, topic, strlen(ATTRIBUTE_RESPONSE_TOPIC)) == 0) {
             process_attribute_request_message(topic, data);
+        }
+        else if (strncmp(ATTRIBUTE_GATEWAY_RESPONSE_TOPIC, topic, strlen(ATTRIBUTE_GATEWAY_RESPONSE_TOPIC)) == 0) {
+            process_gateway_attribute_request_message(topic, data);
         }
         else if (strncmp(ATTRIBUTE_TOPIC, topic, strlen(ATTRIBUTE_TOPIC)) == 0) {
             process_shared_attribute_update_message(topic, data);
