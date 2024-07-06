@@ -1001,6 +1001,19 @@ class ThingsBoardSized {
         return Attributes_Request(callback, SHARED_REQUEST_KEY, SHARED_RESPONSE_KEY);
     }
 
+    /// @brief Requests one shared attribute calllback,
+    /// that will be called if the key-value pair from the server for the given shared attributes is received.
+    /// See https://thingsboard.io/docs/reference/mqtt-api/#request-attribute-values-from-the-server for more information
+    /// @param callback Callback method that will be called
+    /// @return Whether requesting the given callback was successful or not
+#if THINGSBOARD_ENABLE_DYNAMIC
+    bool Gateway_Shared_Attributes_Request(Attribute_Request_Callback const & callback) {
+#else
+    bool Gateway_Shared_Attributes_Request(Attribute_Request_Callback<MaxAttributes> const & callback) {
+#endif // THINGSBOARD_ENABLE_DYNAMIC
+        return Gateway_Attributes_Request(callback, SHARED_REQUEST_KEY, SHARED_RESPONSE_KEY);
+    }
+
     /// @brief Subscribes multiple shared attribute callbacks,
     /// that will be called if the key-value pair from the server for the given shared attributes is received.
     /// See https://thingsboard.io/docs/reference/mqtt-api/#subscribe-to-attribute-updates-from-the-server for more information
