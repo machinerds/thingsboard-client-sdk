@@ -96,6 +96,17 @@ char constexpr SHARED_REQUEST_KEY[] = "sharedKeys";
 char constexpr SHARED_RESPONSE_KEY[] = "shared";
 #endif // THINGSBOARD_ENABLE_PROGMEM
 
+
+// Gateway shared attribute request keys.
+#if THINGSBOARD_ENABLE_PROGMEM
+char constexpr GATEWAY_SHARED_REQUEST_KEY[] PROGMEM = "keys";
+char constexpr GATEWAY_SHARED_RESPONSE_KEY[] PROGMEM = "values";
+#else
+char constexpr GATEWAY_SHARED_REQUEST_KEY[] = "keys";
+char constexpr GATEWAY_SHARED_RESPONSE_KEY[] = "values";
+#endif // THINGSBOARD_ENABLE_PROGMEM
+
+
 // Client side attribute request keys.
 #if THINGSBOARD_ENABLE_PROGMEM
 char constexpr CLIENT_REQUEST_KEYS[] PROGMEM = "clientKeys";
@@ -1007,11 +1018,11 @@ class ThingsBoardSized {
     /// @param callback Callback method that will be called
     /// @return Whether requesting the given callback was successful or not
 #if THINGSBOARD_ENABLE_DYNAMIC
-    bool Gateway_Shared_Attributes_Request(Attribute_Request_Callback const & callback) {
+    bool Gateway_Shared_Attributes_Request(Attribute_Request_Callback const & callback, String deviceName) {
 #else
-    bool Gateway_Shared_Attributes_Request(Attribute_Request_Callback<MaxAttributes> const & callback) {
+    bool Gateway_Shared_Attributes_Request(Attribute_Request_Callback<MaxAttributes> const & callback, String deviceName) {
 #endif // THINGSBOARD_ENABLE_DYNAMIC
-        return Gateway_Attributes_Request(callback, SHARED_REQUEST_KEY, SHARED_RESPONSE_KEY);
+        return Gateway_Attributes_Request(callback, GATEWAY_SHARED_REQUEST_KEY, GATEWAY_SHARED_RESPONSE_KEY, deviceName);
     }
 
     /// @brief Subscribes multiple shared attribute callbacks,
@@ -1270,9 +1281,9 @@ class ThingsBoardSized {
     /// @param attributeResponseKey Key of the key-value pair that will contain the attributes we got as a response
     /// @return Whether requesting the given callback was successful or not
 #if THINGSBOARD_ENABLE_DYNAMIC
-    bool Gateway_Attributes_Request(Attribute_Request_Callback const & callback, char const * const attributeRequestKey, char const * const attributeResponseKey) {
+    bool Gateway_Attributes_Request(Attribute_Request_Callback const & callback, char const * const attributeRequestKey, char const * const attributeResponseKey, String deviceName) {
 #else
-    bool Gateway_Attributes_Request(Attribute_Request_Callback<MaxAttributes> const & callback, char const * const attributeRequestKey, char const * const attributeResponseKey) {
+    bool Gateway_Attributes_Request(Attribute_Request_Callback<MaxAttributes> const & callback, char const * const attributeRequestKey, char const * const attributeResponseKey, String deviceName) {
 #endif // THINGSBOARD_ENABLE_DYNAMIC
         auto const & attributes = callback.Get_Attributes();
 
@@ -1303,22 +1314,11 @@ class ThingsBoardSized {
         // String are const char* and therefore stored as a pointer --> zero copy, meaning the size for the strings is 0 bytes,
         // Data structure size depends on the amount of key value pairs passed + the default clientKeys or sharedKeys
         // See https://arduinojson.org/v6/assistant/ for more information on the needed size for the JsonDocument
-        StaticJsonDocument<JSON_OBJECT_SIZE(1)> requestBuffer;
+        StaticJsonDocument<JSON_OBJECT_SIZE(10)> requestBuffer;
 
-        // Calculate the size required for the char buffer containing all the attributes seperated by a comma,
-        // before initalizing it so it is possible to allocate it on the stack
-        size_t size = 0U;
-        for (const auto & att : attributes) {
-            if (Helper::stringIsNullorEmpty(att)) {
-                continue;
-            }
 
-            size += strlen(att);
-            size += strlen(COMMA);
-        }
+        JsonArray atts = requestBuffer.createNestedArray(attributeRequestKey);
 
-        // Initalizes complete array to 0, required because strncat needs both destination and source to contain proper null terminated strings
-        char request[size] = {};
         for (const auto & att : attributes) {
             if (Helper::stringIsNullorEmpty(att)) {
 #if THINGSBOARD_ENABLE_DEBUG
@@ -1326,24 +1326,19 @@ class ThingsBoardSized {
 #endif // THINGSBOARD_ENABLE_DEBUG
                 continue;
             }
-
-            strncat(request, att, size);
-            size -= strlen(att);
-            strncat(request, COMMA, size);
-            size -= strlen(COMMA);
+            atts.add(att);
         }
 
-        // Ensure to cast to const, this is done so that ArduinoJson does not copy the value but instead simply store the pointer, which does not require any more memory,
-        // besides the base size needed to allocate one key-value pair. Because if we don't the char array would be copied
-        // and because there is not enough space the value would simply be "undefined" instead. Which would cause the request to not be sent correctly
-        requestBuffer[attributeRequestKey] = static_cast<const char*>(request);
 
         m_request_id++;
+        requestBuffer["id"] = m_request_id;
+        requestBuffer["client"] = false;
+        requestBuffer["device"] = deviceName;
         registeredCallback->Set_Request_ID(m_request_id);
         registeredCallback->Set_Attribute_Key(attributeResponseKey);
 
-        char topic[Helper::detectSize(ATTRIBUTE_GATEWAY_REQUEST_TOPIC, m_request_id)] = {};
-        (void)snprintf(topic, sizeof(topic), ATTRIBUTE_GATEWAY_REQUEST_TOPIC, m_request_id);
+        char topic[Helper::detectSize(ATTRIBUTE_GATEWAY_REQUEST_TOPIC)] = {};
+        (void)snprintf(topic, sizeof(topic), ATTRIBUTE_GATEWAY_REQUEST_TOPIC);
 
         size_t const objectSize = Helper::Measure_Json(requestBuffer);
         return Send_Json(topic, requestBuffer, objectSize);
@@ -1915,11 +1910,10 @@ class ThingsBoardSized {
     /// @param topic Previously subscribed topic, we got the response over
     /// @param data Payload sent by the server over our given topic, that contains our key value pairs
     void process_gateway_attribute_request_message(char * const topic, JsonObjectConst & data) {
-        size_t const request_id = Helper::parseRequestId(ATTRIBUTE_GATEWAY_RESPONSE_TOPIC, topic);
+        size_t const request_id = data["id"];
 
         for (auto it = m_attribute_request_callbacks.cbegin(); it != m_attribute_request_callbacks.cend(); ++it) {
             auto const & attribute_request = *it;
-
             if (attribute_request.Get_Request_ID() != request_id) {
                 continue;
             }
