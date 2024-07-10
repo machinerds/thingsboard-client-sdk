@@ -1314,7 +1314,7 @@ class ThingsBoardSized {
         // String are const char* and therefore stored as a pointer --> zero copy, meaning the size for the strings is 0 bytes,
         // Data structure size depends on the amount of key value pairs passed + the default clientKeys or sharedKeys
         // See https://arduinojson.org/v6/assistant/ for more information on the needed size for the JsonDocument
-        StaticJsonDocument<JSON_OBJECT_SIZE(10)> requestBuffer;
+        StaticJsonDocument<JSON_OBJECT_SIZE(25)> requestBuffer;
 
 
         JsonArray atts = requestBuffer.createNestedArray(attributeRequestKey);
@@ -1929,10 +1929,6 @@ class ThingsBoardSized {
                 Logger::println(ATT_KEY_NOT_FOUND);
 #endif // THINGSBOARD_ENABLE_DEBUG
                 goto delete_callback;
-            }
-
-            if (data.containsKey(attributeResponseKey)) {
-                data = data[attributeResponseKey];
             }
 
 #if THINGSBOARD_ENABLE_DEBUG
