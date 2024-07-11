@@ -66,13 +66,13 @@ char constexpr ATTRIBUTE_RESPONSE_TOPIC[] = "v1/devices/me/attributes/response";
 #endif // THINGSBOARD_ENABLE_PROGMEM
 
 #if THINGSBOARD_ENABLE_PROGMEM
-char constexpr ATTRIBUTE_GATEWAY_REQUEST_TOPIC[] PROGMEM = "v1/gateway/attributes/request";
-char constexpr ATTRIBUTE_GATEWAY_RESPONSE_SUBSCRIBE_TOPIC[] PROGMEM = "v1/gateway/attributes/response";
-char constexpr ATTRIBUTE_GATEWAY_RESPONSE_TOPIC[] PROGMEM = "v1/gateway/attributes";
+char constexpr GATEWAY_ATTRIBUTE_REQUEST_TOPIC[] PROGMEM = "v1/gateway/attributes/request";
+char constexpr GATEWAY_ATTRIBUTE_RESPONSE_SUBSCRIBE_TOPIC[] PROGMEM = "v1/gateway/attributes/response";
+char constexpr GATEWAY_ATTRIBUTE_RESPONSE_TOPIC[] PROGMEM = "v1/gateway/attributes";
 #else
-char constexpr ATTRIBUTE_GATEWAY_REQUEST_TOPIC[] = "v1/gateway/attributes/request";
-char constexpr ATTRIBUTE_GATEWAY_RESPONSE_SUBSCRIBE_TOPIC[] = "v1/gateway/attributes/response";
-char constexpr ATTRIBUTE_GATEWAY_RESPONSE_TOPIC[] = "v1/gateway/attributes";
+char constexpr GATEWAY_ATTRIBUTE_REQUEST_TOPIC[] = "v1/gateway/attributes/request";
+char constexpr GATEWAY_ATTRIBUTE_RESPONSE_SUBSCRIBE_TOPIC[] = "v1/gateway/attributes/response";
+char constexpr GATEWAY_ATTRIBUTE_RESPONSE_TOPIC[] = "v1/gateway/attributes";
 #endif // THINGSBOARD_ENABLE_PROGMEM
 
 
@@ -1337,8 +1337,8 @@ class ThingsBoardSized {
         registeredCallback->Set_Request_ID(m_request_id);
         registeredCallback->Set_Attribute_Key(attributeResponseKey);
 
-        char topic[Helper::detectSize(ATTRIBUTE_GATEWAY_REQUEST_TOPIC)] = {};
-        (void)snprintf(topic, sizeof(topic), ATTRIBUTE_GATEWAY_REQUEST_TOPIC);
+        char topic[Helper::detectSize(GATEWAY_ATTRIBUTE_REQUEST_TOPIC)] = {};
+        (void)snprintf(topic, sizeof(topic), GATEWAY_ATTRIBUTE_REQUEST_TOPIC);
 
         size_t const objectSize = Helper::Measure_Json(requestBuffer);
         return Send_Json(topic, requestBuffer, objectSize);
@@ -1615,8 +1615,8 @@ class ThingsBoardSized {
             return false;
         }
 #endif // !THINGSBOARD_ENABLE_DYNAMIC
-        if (!m_client.subscribe(ATTRIBUTE_GATEWAY_RESPONSE_SUBSCRIBE_TOPIC)) {
-            Logger::printfln(SUBSCRIBE_TOPIC_FAILED, ATTRIBUTE_GATEWAY_RESPONSE_SUBSCRIBE_TOPIC);
+        if (!m_client.subscribe(GATEWAY_ATTRIBUTE_RESPONSE_SUBSCRIBE_TOPIC)) {
+            Logger::printfln(SUBSCRIBE_TOPIC_FAILED, GATEWAY_ATTRIBUTE_RESPONSE_SUBSCRIBE_TOPIC);
           return false;
         }
 
@@ -1639,7 +1639,7 @@ class ThingsBoardSized {
     /// and from the  attribute response topic, was successful or not
     bool Gateway_Attributes_Request_Unsubscribe() {
         m_attribute_request_callbacks.clear();
-        return m_client.unsubscribe(ATTRIBUTE_GATEWAY_RESPONSE_SUBSCRIBE_TOPIC);
+        return m_client.unsubscribe(GATEWAY_ATTRIBUTE_RESPONSE_SUBSCRIBE_TOPIC);
     }
 
     /// @brief Attempts to send a single key-value pair with the given key and value of the given type
@@ -2048,7 +2048,7 @@ class ThingsBoardSized {
         else if (strncmp(ATTRIBUTE_RESPONSE_TOPIC, topic, strlen(ATTRIBUTE_RESPONSE_TOPIC)) == 0) {
             process_attribute_request_message(topic, data);
         }
-        else if (strncmp(ATTRIBUTE_GATEWAY_RESPONSE_TOPIC, topic, strlen(ATTRIBUTE_GATEWAY_RESPONSE_TOPIC)) == 0) {
+        else if (strncmp(GATEWAY_ATTRIBUTE_RESPONSE_TOPIC, topic, strlen(GATEWAY_ATTRIBUTE_RESPONSE_TOPIC)) == 0) {
             process_gateway_attribute_request_message(topic, data);
         }
         else if (strncmp(ATTRIBUTE_TOPIC, topic, strlen(ATTRIBUTE_TOPIC)) == 0) {
