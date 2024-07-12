@@ -25,9 +25,13 @@
 #if THINGSBOARD_ENABLE_PROGMEM
 char constexpr ATTRIBUTE_TOPIC[] PROGMEM = "v1/devices/me/attributes";
 char constexpr TELEMETRY_TOPIC[] PROGMEM = "v1/devices/me/telemetry";
+char constexpr GATEWAY_ATTRIBUTE_TOPIC[] PROGMEM = "v1/gateway/attributes";
+char constexpr GATEWAY_TELEMETRY_TOPIC[] PROGMEM = "v1/gateway/telemetry";
 #else
 char constexpr ATTRIBUTE_TOPIC[] = "v1/devices/me/attributes";
 char constexpr TELEMETRY_TOPIC[] = "v1/devices/me/telemetry";
+char constexpr GATEWAY_ATTRIBUTE_TOPIC[] = "v1/gateway/attributes";
+char constexpr GATEWAY_TELEMETRY_TOPIC[] = "v1/gateway/telemetry";
 #endif // THINGSBOARD_ENABLE_PROGMEM
 
 // RPC topics.
@@ -68,11 +72,11 @@ char constexpr ATTRIBUTE_RESPONSE_TOPIC[] = "v1/devices/me/attributes/response";
 #if THINGSBOARD_ENABLE_PROGMEM
 char constexpr GATEWAY_ATTRIBUTE_REQUEST_TOPIC[] PROGMEM = "v1/gateway/attributes/request";
 char constexpr GATEWAY_ATTRIBUTE_RESPONSE_SUBSCRIBE_TOPIC[] PROGMEM = "v1/gateway/attributes/response";
-char constexpr GATEWAY_ATTRIBUTE_RESPONSE_TOPIC[] PROGMEM = "v1/gateway/attributes";
+char constexpr GATEWAY_ATTRIBUTE_RESPONSE_TOPIC[] PROGMEM = "v1/gateway/attributes/response";
 #else
 char constexpr GATEWAY_ATTRIBUTE_REQUEST_TOPIC[] = "v1/gateway/attributes/request";
 char constexpr GATEWAY_ATTRIBUTE_RESPONSE_SUBSCRIBE_TOPIC[] = "v1/gateway/attributes/response";
-char constexpr GATEWAY_ATTRIBUTE_RESPONSE_TOPIC[] = "v1/gateway/attributes";
+char constexpr GATEWAY_ATTRIBUTE_RESPONSE_TOPIC[] = "v1/gateway/attributes/response";
 #endif // THINGSBOARD_ENABLE_PROGMEM
 
 
@@ -114,6 +118,15 @@ char constexpr CLIENT_RESPONSE_KEY[] PROGMEM = "client";
 #else
 char constexpr CLIENT_REQUEST_KEYS[] = "clientKeys";
 char constexpr CLIENT_RESPONSE_KEY[] = "client";
+#endif // THINGSBOARD_ENABLE_PROGMEM
+
+// Gateway client attribute request keys.
+#if THINGSBOARD_ENABLE_PROGMEM
+char constexpr GATEWAY_CLIENT_REQUEST_KEY[] PROGMEM = "keys";
+char constexpr GATEWAY_CLIENT_RESPONSE_KEY[] PROGMEM = "values";
+#else
+char constexpr GATEWAY_CLIENT_REQUEST_KEY[] = "keys";
+char constexpr GATEWAY_CLIENT_RESPONSE_KEY[] = "values";
 #endif // THINGSBOARD_ENABLE_PROGMEM
 
 // RPC data keys.
@@ -463,6 +476,8 @@ class ThingsBoardSized {
         (void)RPC_Request_Unsubscribe();
         // Cleanup all shared attributes subscriptions
         (void)Shared_Attributes_Unsubscribe();
+        // Cleanup all gateway shared attributes subscriptions
+        (void)Gateway_Shared_Attributes_Unsubscribe();
         // Cleanup all client-side or shared attributes requests
         (void)Attributes_Request_Unsubscribe();
         // Cleanup all gateway client-side or shared attributes requests
@@ -789,6 +804,19 @@ class ThingsBoardSized {
         return Attributes_Request(callback, CLIENT_REQUEST_KEYS, CLIENT_RESPONSE_KEY);
     }
 
+    /// @brief Requests one gateway client-side attribute calllback,
+    /// that will be called if the key-value pair from the server for the given client-side attributes is received.
+    /// See https://thingsboard.io/docs/reference/gateway-mqtt-api/#attributes-api for more information
+    /// @param callback Callback method that will be called
+    /// @return Whether requesting the given callback was successful or not
+#if THINGSBOARD_ENABLE_DYNAMIC
+    bool Gateway_Client_Attributes_Request(Attribute_Request_Callback const & callback) {
+#else
+    bool Gateway_Client_Attributes_Request(Attribute_Request_Callback<MaxAttributes> const & callback) {
+#endif // THINGSBOARD_ENABLE_DYNAMIC
+        return Gateway_Attributes_Request(callback, GATEWAY_CLIENT_REQUEST_KEY, GATEWAY_CLIENT_RESPONSE_KEY);
+    }
+
     //----------------------------------------------------------------------------
     // Server-side RPC API
 
@@ -1053,6 +1081,35 @@ class ThingsBoardSized {
         return true;
     }
 
+
+    /// @brief Subscribes multiple gateway shared attribute callbacks,
+    /// that will be called if the key-value pair from the server for the given shared attributes is received.
+    /// See https://thingsboard.io/docs/reference/mqtt-api/#subscribe-to-attribute-updates-from-the-server for more information
+    /// @tparam InputIterator Class that points to the begin and end iterator
+    /// of the given data container, allows for using / passing either std::vector or std::array.
+    /// See https://en.cppreference.com/w/cpp/iterator/input_iterator for more information on the requirements of the iterator
+    /// @param first Iterator pointing to the first element in the data container
+    /// @param last Iterator pointing to the end of the data container (last element + 1)
+    /// @return Whether subscribing the given callbacks was successful or not
+    template<typename InputIterator>
+    bool Gateway_Shared_Attributes_Subscribe(InputIterator const & first, InputIterator const & last) {
+#if !THINGSBOARD_ENABLE_DYNAMIC
+        size_t const size = Helper::distance(first, last);
+        if (m_shared_attribute_update_callbacks.size() + size > m_shared_attribute_update_callbacks.capacity()) {
+            Logger::printfln(MAX_SUBSCRIPTIONS_EXCEEDED, SHARED_ATTRIBUTE_UPDATE_SUBSCRIPTIONS);
+            return false;
+        }
+#endif // !THINGSBOARD_ENABLE_DYNAMIC
+        if (!m_client.subscribe(GATEWAY_ATTRIBUTE_TOPIC)) {
+            Logger::printfln(SUBSCRIBE_TOPIC_FAILED, GATEWAY_ATTRIBUTE_TOPIC);
+            return false;
+        }
+
+        // Push back complete vector into our local m_shared_attribute_update_callbacks vector.
+        m_shared_attribute_update_callbacks.insert(m_shared_attribute_update_callbacks.end(), first, last);
+        return true;
+    }
+
     /// @brief Subscribe one shared attribute callback,
     /// that will be called if the key-value pair from the server for the given shared attributes is received.
     /// See https://thingsboard.io/docs/reference/mqtt-api/#subscribe-to-attribute-updates-from-the-server for more information
@@ -1079,6 +1136,32 @@ class ThingsBoardSized {
         return true;
     }
 
+    /// @brief Subscribe one gateway shared attribute callback,
+    /// that will be called if the key-value pair from the server for the given shared attributes is received.
+    /// See https://thingsboard.io/docs/reference/gateway-mqtt-api#attributes-api for more information
+    /// @param callback Callback method that will be called
+    /// @return Whether subscribing the given callback was successful or not
+#if THINGSBOARD_ENABLE_DYNAMIC
+    bool Gateway_Shared_Attributes_Subscribe(Shared_Attribute_Callback const & callback) {
+#else
+    bool Gateway_Shared_Attributes_Subscribe(Shared_Attribute_Callback<MaxAttributes> const & callback) {
+#endif // THINGSBOARD_ENABLE_DYNAMIC
+#if !THINGSBOARD_ENABLE_DYNAMIC
+        if (m_shared_attribute_update_callbacks.size() + 1U > m_shared_attribute_update_callbacks.capacity()) {
+            Logger::printfln(MAX_SUBSCRIPTIONS_EXCEEDED, SHARED_ATTRIBUTE_UPDATE_SUBSCRIPTIONS);
+            return false;
+        }
+#endif // !THINGSBOARD_ENABLE_DYNAMIC
+        if (!m_client.subscribe(GATEWAY_ATTRIBUTE_TOPIC)) {
+            Logger::printfln(SUBSCRIBE_TOPIC_FAILED, GATEWAY_ATTRIBUTE_TOPIC);
+            return false;
+        }
+
+        // Push back given callback into our local vector
+        m_shared_attribute_update_callbacks.push_back(callback);
+        return true;
+    }
+
     /// @brief Unsubcribes all shared attribute callbacks.
     /// See https://thingsboard.io/docs/reference/mqtt-api/#subscribe-to-attribute-updates-from-the-server for more information
     /// @return Whether unsubcribing all the previously subscribed callbacks
@@ -1086,6 +1169,15 @@ class ThingsBoardSized {
     bool Shared_Attributes_Unsubscribe() {
         m_shared_attribute_update_callbacks.clear();
         return m_client.unsubscribe(ATTRIBUTE_TOPIC);
+    }
+
+    /// @brief Unsubcribes all gateway shared attribute callbacks.
+    /// See https://thingsboard.io/docs/reference/gateway-mqtt-api/#attributes-api for more information
+    /// @return Whether unsubcribing all the previously subscribed callbacks
+    /// and from the attribute topic, was successful or not
+    bool Gateway_Shared_Attributes_Unsubscribe() {
+        m_shared_attribute_update_callbacks.clear();
+        return m_client.unsubscribe(GATEWAY_ATTRIBUTE_TOPIC);
     }
   
   private:
@@ -1854,6 +1946,66 @@ class ThingsBoardSized {
         }
     }
 
+    /// @brief Process callback that will be called upon gateway shared attribute update arrival
+    /// and is responsible for handling the payload and calling the appropriate previously subscribed callbacks
+    /// @param topic Previously subscribed topic, we got the response over
+    /// @param data Payload sent by the server over our given topic, that contains our key value pairs
+    void process_gateway_shared_attribute_update_message(char * const topic, JsonObjectConst & data) {
+        if (!data) {
+#if THINGSBOARD_ENABLE_DEBUG
+            Logger::println(NOT_FOUND_ATT_UPDATE);
+#endif // THINGSBOARD_ENABLE_DEBUG
+            return;
+        }
+
+        if (data.containsKey(SHARED_RESPONSE_KEY)) {
+            data = data[SHARED_RESPONSE_KEY];
+        }
+
+        for (auto const & shared_attribute : m_shared_attribute_update_callbacks) {
+            if (shared_attribute.Get_Attributes().empty()) {
+#if THINGSBOARD_ENABLE_DEBUG
+                Logger::println(ATT_CB_NO_KEYS);
+#endif // THINGSBOARD_ENABLE_DEBUG
+                // No specifc keys were subscribed so we call the callback anyway, assumed to be subscribed to any update
+                shared_attribute.template Call_Callback<Logger>(data);
+                continue;
+            }
+
+            char const * requested_att = nullptr;
+
+            for (auto const & att : shared_attribute.Get_Attributes()) {
+                if (Helper::stringIsNullorEmpty(att)) {
+#if THINGSBOARD_ENABLE_DEBUG
+                    Logger::println(ATT_IS_NULL);
+#endif // THINGSBOARD_ENABLE_DEBUG
+                    continue;
+                }
+                // Check if the request contained any of our requested keys and
+                // break early if the key was requested from this callback.
+                if (data["data"].containsKey(att)) {
+                    requested_att = att;
+                    break;
+                }
+            }
+
+            // Check if this callback did not request any keys that were in this response,
+            // if there were not we simply continue with the next subscribed callback.
+            if (requested_att == nullptr) {
+#if THINGSBOARD_ENABLE_DEBUG
+                Logger::println(ATT_NO_CHANGE);
+#endif // THINGSBOARD_ENABLE_DEBUG
+                continue;
+            }
+
+#if THINGSBOARD_ENABLE_DEBUG
+            Logger::printfln(CALLING_ATT_CB, requested_att);
+#endif // THINGSBOARD_ENABLE_DEBUG
+
+            shared_attribute.template Call_Callback<Logger>(data);
+        }
+    }
+
     /// @brief Process callback that will be called upon client-side or shared attribute request arrival
     /// and is responsible for handling the payload and calling the appropriate previously subscribed callbacks
     /// @param topic Previously subscribed topic, we got the response over
@@ -2053,6 +2205,9 @@ class ThingsBoardSized {
         }
         else if (strncmp(ATTRIBUTE_TOPIC, topic, strlen(ATTRIBUTE_TOPIC)) == 0) {
             process_shared_attribute_update_message(topic, data);
+        }
+        else if (strncmp(GATEWAY_ATTRIBUTE_TOPIC, topic, strlen(GATEWAY_ATTRIBUTE_TOPIC)) == 0) {
+            process_gateway_shared_attribute_update_message(topic, data);
         }
         else if (strncmp(PROV_RESPONSE_TOPIC, topic, strlen(PROV_RESPONSE_TOPIC)) == 0) {
             process_provisioning_response(topic, data);
