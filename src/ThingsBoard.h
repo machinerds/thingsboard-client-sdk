@@ -1536,7 +1536,7 @@ class ThingsBoardSized {
             char message[JSON_STRING_SIZE(strlen(FW_UP_TO_DATE)) + JSON_STRING_SIZE(strlen(curr_fw_version))] = {};
             (void)snprintf(message, sizeof(message), FW_UP_TO_DATE, curr_fw_version);
             Logger::println(message);
-            Firmware_Send_State(FW_STATE_FAILED, message);
+            //Firmware_Send_State(FW_STATE_FAILED, message);
             return;
         }
         // If firmware title is not the same, we do not initiate an update, because we expect the binary to be for another type of device and downloading it on this device could possibly cause hardware issues
